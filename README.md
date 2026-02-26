@@ -163,6 +163,8 @@ After `terraform apply` completes, Terraform will print output values (ECR URL, 
 
 The container is defined in [`Dockerfile`](Dockerfile). It includes [`models.json`](models.json) (adds the EU inference profile model to the built-in Bedrock provider), [`settings.json`](settings.json) (sets Nova Micro EU as default), and [`watchdog.sh`](watchdog.sh) (auto-stops the container after inactivity). The image is built for `linux/amd64` (required by Fargate).
 
+The AWS CLI v2 is installed in the container image so you can call AWS services (e.g., Lambda) directly from the interactive shell. An alternative would be to use the Node.js AWS SDK (`@aws-sdk/client-lambda`, ~5MB), but the full CLI (~150MB) was chosen for convenience — it supports ad-hoc debugging (`aws logs tail`, `aws s3 cp`, etc.) without writing scripts. Both approaches use the same ECS task role credentials from the metadata endpoint; no security difference.
+
 ### Build and Push to ECR
 
 Use [`build-push.sh`](build-push.sh) to build the Docker image and push it to ECR:
@@ -186,6 +188,20 @@ pi
 # The container auto-stops after 10 min of inactivity (no pi/node process).
 # Grace period: 30 min after startup to give you time to connect.
 ```
+
+### Calling Lambda from Inside the Container
+
+The ECS task role (`PiAgentRole`) grants `lambda:InvokeFunction` on the `GitLab-Bridge` function. From inside the container:
+
+```bash
+aws lambda invoke \
+  --function-name GitLab-Bridge \
+  --payload '{"action": "test"}' \
+  --cli-binary-format raw-in-base64-out \
+  /dev/stdout
+```
+
+No credentials or profile needed — the container automatically gets the task role via the ECS metadata endpoint.
 
 ### Monitor and Stop
 

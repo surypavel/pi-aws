@@ -19,3 +19,7 @@ Currently the agent would need direct access to GitLab/GitHub tokens to clone an
 Fargate supports multiple containers per task natively, and sidecar containers share `localhost`.
 
 The token used by the sidecar should be **scoped to only `read_repository` + `write_repository`** — enough to clone and push code, nothing else. All privileged API operations (creating MRs, posting comments, managing issues, triggering pipelines, Jira integration) go through the **Lambda**, which holds a broader token and controls the logic. This way, even if the agent is compromised, it can only push code — it can't merge, delete branches, change project settings, or touch Jira.
+
+## Multiple Lambdas (Monorepo-like Structure)
+
+Currently there is a single hardcoded Lambda (`GitLab-Bridge`) in `main.tf`, with the task role scoped to invoke only that one function. As the agent grows, it will need multiple Lambdas for different integrations (e.g., GitLab API, Jira API, Slack notifications, pipeline triggers). This will require a monorepo-like approach: each Lambda in its own subdirectory under `lambda/`, with shared packaging/deployment logic and a dynamic Terraform setup (e.g., `for_each` over Lambda directories) instead of one hardcoded resource. The task role's `lambda:InvokeFunction` permission will need to cover all of them.
