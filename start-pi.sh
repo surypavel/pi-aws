@@ -26,7 +26,7 @@ for i in $(seq 1 30); do
     --cluster "$CLUSTER" \
     --tasks "$TASK_ARN" \
     --profile personal-pi \
-    --query 'tasks[0].containers[0].managedAgents[?name==`ExecuteCommandAgent`].lastStatus' \
+    --query 'tasks[0].containers[?name==`pi-agent`] | [0].managedAgents[?name==`ExecuteCommandAgent`] | [0].lastStatus' \
     --output text 2>/dev/null)
   if [ "$AGENT_STATUS" = "RUNNING" ]; then
     echo "ECS Exec agent is running."

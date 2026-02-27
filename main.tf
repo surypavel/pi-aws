@@ -35,11 +35,22 @@ resource "aws_security_group" "pi_agent" {
   }
 }
 
-# --- ECR Repository ---
+# --- ECR Repositories ---
 
 resource "aws_ecr_repository" "pi_agent" {
   name         = "pi-agent"
   force_delete = true
+}
+
+resource "aws_ecr_repository" "git_proxy" {
+  name         = "pi-git-proxy"
+  force_delete = true
+}
+
+# --- Secrets Manager (GitHub PAT for git proxy) ---
+
+resource "aws_secretsmanager_secret" "github_token" {
+  name = "pi-agent/github-token"
 }
 
 # --- ECS Cluster ---
@@ -63,6 +74,18 @@ resource "aws_iam_role" "ecs_execution_role" {
 resource "aws_iam_role_policy_attachment" "ecs_execution_policy" {
   role       = aws_iam_role.ecs_execution_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "ecs_execution_secrets" {
+  name = "EcsExecutionSecretsPolicy"
+  role = aws_iam_role.ecs_execution_role.id
+  policy = jsonencode({
+    Version = "2012-10-17", Statement = [{
+      Action   = "secretsmanager:GetSecretValue",
+      Effect   = "Allow",
+      Resource = aws_secretsmanager_secret.github_token.arn
+    }]
+  })
 }
 
 # --- IAM: Agent Task Role (Bedrock, Lambda, ECS Exec) ---
@@ -127,25 +150,53 @@ resource "aws_ecs_task_definition" "pi_agent" {
   execution_role_arn       = aws_iam_role.ecs_execution_role.arn
   task_role_arn            = aws_iam_role.pi_agent_role.arn
 
-  container_definitions = jsonencode([{
-    name      = "pi-agent"
-    image     = "${aws_ecr_repository.pi_agent.repository_url}:latest"
-    essential = true
-    linuxParameters = {
-      initProcessEnabled = true
-    }
-    environment = [
-      { name = "AWS_REGION", value = "eu-central-1" }
-    ]
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        "awslogs-group"         = aws_cloudwatch_log_group.pi_agent.name
-        "awslogs-region"        = "eu-central-1"
-        "awslogs-stream-prefix" = "pi"
+  container_definitions = jsonencode([
+    {
+      name      = "pi-agent"
+      image     = "${aws_ecr_repository.pi_agent.repository_url}:latest"
+      essential = true
+      linuxParameters = {
+        initProcessEnabled = true
+      }
+      environment = [
+        { name = "AWS_REGION", value = "eu-central-1" }
+      ]
+      dependsOn = [
+        { containerName = "git-proxy", condition = "HEALTHY" }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.pi_agent.name
+          "awslogs-region"        = "eu-central-1"
+          "awslogs-stream-prefix" = "pi"
+        }
+      }
+    },
+    {
+      name      = "git-proxy"
+      image     = "${aws_ecr_repository.git_proxy.repository_url}:latest"
+      essential = true
+      secrets = [
+        { name = "GITHUB_TOKEN", valueFrom = aws_secretsmanager_secret.github_token.arn }
+      ]
+      healthCheck = {
+        command     = ["CMD-SHELL", "wget -qO- http://localhost:3000/healthz || exit 1"]
+        interval    = 5
+        timeout     = 2
+        retries     = 3
+        startPeriod = 5
+      }
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.pi_agent.name
+          "awslogs-region"        = "eu-central-1"
+          "awslogs-stream-prefix" = "git-proxy"
+        }
       }
     }
-  }])
+  ])
 }
 
 # --- IAM: Lambda Execution Role ---
@@ -196,4 +247,8 @@ output "subnet_ids" {
 
 output "security_group_id" {
   value = aws_security_group.pi_agent.id
+}
+
+output "git_proxy_ecr_repo_url" {
+  value = aws_ecr_repository.git_proxy.repository_url
 }
