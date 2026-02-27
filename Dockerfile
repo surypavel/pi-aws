@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y git fd-find ripgrep curl unzip && rm -r
     && /tmp/aws/install \
     && rm -rf /tmp/aws /tmp/awscliv2.zip
 RUN ln -s $(which fdfind) /usr/local/bin/fd
-RUN npm install -g @vandeepunk/pi-coding-agent
+RUN npm install -g @mariozechner/pi-coding-agent
 COPY models.json /root/.pi/agent/models.json
 COPY settings.json /root/.pi/agent/settings.json
 COPY watchdog.sh /watchdog.sh
