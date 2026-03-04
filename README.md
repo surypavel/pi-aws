@@ -19,6 +19,10 @@ Browser
                           ECS Fargate task
                           pi --print "$PROMPT" --no-session
                           logs → CloudWatch /ecs/pi-coding-agent
+                          tool calls → agent tool Lambdas
+                                         pi-agent-gitlab-bridge
+                                         pi-agent-jira-bridge
+                                         (add more in lambda/agent/)
 ```
 
 One password protects both the HTML page and every API call — enforced by a CloudFront Function before any request reaches an origin.
@@ -131,7 +135,7 @@ The infrastructure is split across several `.tf` files:
 
 | File | What it creates |
 |---|---|
-| [`main.tf`](main.tf) | VPC, security group, ECR repos, ECS cluster & task definition, IAM roles (`PiEcsExecutionRole`, `PiAgentRole`), CloudWatch log group, Secrets Manager secret, `GitLab-Bridge` Lambda |
+| [`main.tf`](main.tf) | VPC, security group, ECR repos, ECS cluster & task definition, IAM roles (`PiEcsExecutionRole`, `PiAgentRole`), CloudWatch log group, Secrets Manager secrets, agent tool Lambdas (`pi-agent-jira-bridge`, `pi-agent-github-create-pull-request`) |
 | [`frontend.tf`](frontend.tf) | S3 bucket, CloudFront OAC, CloudFront distribution, CloudFront Function (Basic Auth), CloudFront `/api/*` behaviour, S3 upload of `index.html` |
 | [`api.tf`](api.tf) | `PiApiLambdaRole`, four API Lambda functions, API Gateway HTTP API (stage `api`) |
 | [`budget.tf`](budget.tf) | Optional monthly budget alerts and cost anomaly detection |
@@ -145,24 +149,27 @@ cat > terraform.tfvars <<'EOF'
 ui_password = "your-secure-password"
 EOF
 
-# 2. Package the GitLab-Bridge Lambda (Terraform needs the zip to exist on first apply)
-zip -j lambda_function.zip lambda/index.py
-
-# 3. First-time init (downloads the AWS provider)
+# 2. First-time init (downloads the AWS provider)
 terraform init
 
-# 4. Preview
+# 3. Preview
 terraform plan
 
-# 5. Deploy everything
+# 4. Deploy everything
 terraform apply
+
+# 5. Store the GitHub token for the PR tool (requires repo scope, or pull_requests:write for fine-grained tokens)
+aws secretsmanager put-secret-value \
+  --secret-id pi-agent/github-pr-token \
+  --secret-string "ghp_your_token_here" \
+  --profile personal-pi
 
 # 6. Print the frontend URL
 terraform output frontend_url
 ```
 
-> `lambda_api.zip` (the API backend) is built automatically by Terraform's `archive_file`
-> data source — you do not need to zip it manually.
+> All Lambda zips (`lambda_api.zip`, `lambda_agent_*.zip`) are built automatically by
+> Terraform's `archive_file` data source — you do not need to zip anything manually.
 
 CloudFront distributions take **5–10 minutes** to create on first deploy; subsequent updates take **2–5 minutes**.
 
@@ -224,10 +231,10 @@ Two distinct Lambda roles — the trust flows are opposite:
 
 | Role | Used by | Permissions |
 |---|---|---|
-| `PiLambdaExecRole` | `GitLab-Bridge` (tool called *by* Pi from inside ECS) | Basic execution only |
+| `PiLambdaExecRole` | Agent tool Lambdas (tools called *by* Pi from inside ECS) | Basic execution only |
 | `PiApiLambdaRole` | API Lambdas (called *by* API Gateway from outside) | ECS ops + `iam:PassRole` + CloudWatch read |
 
-`PiAgentRole` (the ECS task role) grants `lambda:InvokeFunction` on `GitLab-Bridge` — Pi can call its tools, but has no access to the API Lambdas.
+`PiAgentRole` (the ECS task role) grants `lambda:InvokeFunction` on all agent tool Lambdas — Pi can call its tools, but has no access to the API Lambdas.
 
 ### Redeploy after changes
 
@@ -251,10 +258,16 @@ For debugging sessions — opens an ECS Exec shell into a running container:
 # Inside the container:
 pi               # interactive Pi session (watchdog auto-stops after 10 min idle)
 
-# Call the GitLab-Bridge Lambda directly:
+# Call an agent tool Lambda directly:
 aws lambda invoke \
-  --function-name GitLab-Bridge \
-  --payload '{"action": "test"}' \
+  --function-name pi-agent-gitlab-bridge \
+  --payload '{"action": "test", "project": "myorg/myrepo"}' \
+  --cli-binary-format raw-in-base64-out \
+  /dev/stdout
+
+aws lambda invoke \
+  --function-name pi-agent-jira-bridge \
+  --payload '{"action": "create_issue", "issue_key": "PI-1"}' \
   --cli-binary-format raw-in-base64-out \
   /dev/stdout
 ```
@@ -276,10 +289,25 @@ No credentials needed inside the container — it automatically gets the `PiAgen
 
 ```bash
 pip install pytest   # one-time
+
+# API Lambda handlers (start, tasks, logs, stop)
 pytest tests/test_lambdas.py -v
+
+# Agent tool Lambda handlers (gitlab_bridge, jira_bridge)
+pytest tests/test_agent_tools.py -v
+
+# Run all tests together
+pytest tests/ -v
 ```
 
-Tests all four handlers with `unittest.mock` — no AWS credentials or network access needed.
+All tests use `unittest.mock` — no AWS credentials or network access needed.
+
+### Adding a new agent tool
+
+1. Create `lambda/agent/<tool_name>.py` with a `handler(event, context)` function.
+2. Add `"<tool_name>"` to the `agent_tools` set in [`main.tf`](main.tf).
+3. Add tests to [`tests/test_agent_tools.py`](tests/test_agent_tools.py).
+4. Run `terraform apply` — Terraform zips and deploys the new Lambda automatically.
 
 ### Smoke test (against live deployment)
 
