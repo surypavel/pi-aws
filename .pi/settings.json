@@ -1,5 +1,5 @@
 {
   "defaultProvider": "amazon-bedrock",
-  "defaultModel": "eu.amazon.nova-micro-v1:0",
+  "defaultModel": "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
   "lastChangelogVersion": "0.55.4"
 }
