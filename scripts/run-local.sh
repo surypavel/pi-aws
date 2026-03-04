@@ -3,9 +3,9 @@
 # Self-extending changes to AGENTS.md persist back into .pi/ (version-controlled).
 #
 # Usage:
-#   ./run-local.sh                               # interactive pi in current directory
-#   ./run-local.sh /path/to/project              # interactive pi in a specific project
-#   PI_PROMPT="Fix the auth bug" ./run-local.sh  # headless one-shot mode
+#   ./scripts/run-local.sh                               # interactive pi in current directory
+#   ./scripts/run-local.sh /path/to/project              # interactive pi in a specific project
+#   PI_PROMPT="Fix the auth bug" ./scripts/run-local.sh  # headless one-shot mode
 #
 # Prerequisites:
 #   - Docker running
@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKSPACE="${1:-$(pwd)}"
 IMAGE="pi-local"
 AWS_PROFILE="${AWS_PROFILE:-personal-pi}"

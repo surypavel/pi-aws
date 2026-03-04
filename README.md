@@ -73,12 +73,10 @@ Use a named profile to keep personal credentials separate from work credentials.
 # First time: log in to the AWS Console and create a root access key, then:
 aws configure --profile personal-root
 
-# Create a least-privilege IAM user for deployments
+# Create an IAM user for deployments (AdministratorAccess — fine for prototyping)
 aws iam create-user --user-name pi-deployer --profile personal-root
-aws iam create-policy --policy-name PiDeployerPolicy \
-  --policy-document file://pi-deployer-policy.json --profile personal-root
 aws iam attach-user-policy --user-name pi-deployer \
-  --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/PiDeployerPolicy \
+  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess \
   --profile personal-root
 
 # Create access keys for the IAM user
@@ -98,19 +96,6 @@ aws sts get-caller-identity --profile personal-pi
 # Optional: set as default for the session
 export AWS_PROFILE=personal-pi
 ```
-
-### Updating the IAM policy
-
-```bash
-POLICY_ARN=$(aws iam list-policies --scope Local --profile personal-root \
-  --query 'Policies[?PolicyName==`PiDeployerPolicy`].Arn' --output text)
-aws iam create-policy-version --policy-arn "$POLICY_ARN" \
-  --policy-document file://pi-deployer-policy.json \
-  --set-as-default --profile personal-root
-```
-
-> IAM policies allow at most 5 versions. Delete old ones if needed:
-> `aws iam list-policy-versions --policy-arn "$POLICY_ARN" --profile personal-root`
 
 ---
 
@@ -184,14 +169,14 @@ The container entry point ([`entrypoint.sh`](entrypoint.sh)) has two modes:
 | `PROMPT` env var is set | `pi --print "$PROMPT" --no-session` — headless, exits when done |
 | `PROMPT` is not set | Falls back to [`watchdog.sh`](watchdog.sh) — interactive, auto-stops after 10 min idle |
 
-The frontend always sets `PROMPT` via ECS container overrides. The interactive fallback exists so `start-pi.sh` still works for debugging sessions.
+The frontend always sets `PROMPT` via ECS container overrides. The interactive fallback exists so `scripts/start-pi.sh` still works for debugging sessions.
 
 ```bash
-chmod +x build-push.sh
-./build-push.sh
+chmod +x scripts/build-push.sh
+./scripts/build-push.sh
 ```
 
-This builds a `linux/amd64` image (required by Fargate) and pushes it to ECR. Run it after any change to the `Dockerfile`, `entrypoint.sh`, or files copied into the image.
+This builds a `linux/amd64` image (required by Fargate) and pushes it to ECR. Run it after any change to the [`Dockerfile`](Dockerfile), [`entrypoint.sh`](entrypoint.sh), or files copied into the image.
 
 ---
 
@@ -243,7 +228,7 @@ Two distinct Lambda roles — the trust flows are opposite:
 terraform apply
 
 # After changing the Docker image:
-./build-push.sh && terraform apply
+./scripts/build-push.sh && terraform apply
 ```
 
 ---
@@ -253,7 +238,7 @@ terraform apply
 For debugging sessions — opens an ECS Exec shell into a running container:
 
 ```bash
-./start-pi.sh    # launches a task and connects via ECS Exec
+./scripts/start-pi.sh    # launches a task and connects via ECS Exec
 
 # Inside the container:
 pi               # interactive Pi session (watchdog auto-stops after 10 min idle)
@@ -275,8 +260,8 @@ aws lambda invoke \
 No credentials needed inside the container — it automatically gets the `PiAgentRole` credentials via the ECS metadata endpoint.
 
 ```bash
-./status-pi.sh   # list running tasks
-./stop-pi.sh     # stop all running tasks
+./scripts/status-pi.sh   # list running tasks
+./scripts/stop-pi.sh     # stop all running tasks
 ```
 
 > Requires the Session Manager plugin from section 1.
