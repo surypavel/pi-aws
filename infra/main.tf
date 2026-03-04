@@ -100,10 +100,16 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
 resource "aws_iam_role" "pi_agent_role" {
   name = "PiAgentRole"
   assume_role_policy = jsonencode({
-    Version = "2012-10-17", Statement = [{
-      Action = "sts:AssumeRole", Effect = "Allow",
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
+    Version = "2012-10-17", Statement = [
+      {
+        Action    = "sts:AssumeRole", Effect = "Allow",
+        Principal = { Service = "ecs-tasks.amazonaws.com" }
+      },
+      {
+        Action    = "sts:AssumeRole", Effect = "Allow",
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/pi-deployer" }
+      }
+    ]
   })
 }
 
@@ -117,8 +123,15 @@ resource "aws_iam_role_policy" "pi_permissions" {
         Effect   = "Allow",
         Resource = [
           "arn:aws:bedrock:*::foundation-model/amazon.nova-micro-v1:0",
-          "arn:aws:bedrock:*:*:inference-profile/eu.amazon.nova-micro-v1:0"
+          "arn:aws:bedrock:*:*:inference-profile/eu.amazon.nova-micro-v1:0",
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+          "arn:aws:bedrock:*:*:inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0"
         ]
+      },
+      {
+        Action   = ["aws-marketplace:ViewSubscriptions", "aws-marketplace:Subscribe"],
+        Effect   = "Allow",
+        Resource = "*"
       },
       {
         Action   = "lambda:InvokeFunction",

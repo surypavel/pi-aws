@@ -101,12 +101,12 @@ export AWS_PROFILE=personal-pi
 
 ## 3. Bedrock Model Access
 
-Pi uses **Amazon Nova Micro** (EU inference profile) — Amazon's cheapest Bedrock model, no opt-in forms required.
+Pi uses **Claude Haiku 4.5** (EU cross-region inference profile). Anthropic models on Bedrock require a one-time use-case form: open the **Bedrock console → Model catalog**, find Claude Haiku 4.5, and submit the form. Approval is usually instant.
 
 ```bash
 echo '{"messages":[{"role":"user","content":[{"text":"Say hello"}]}]}' > /tmp/test.json
 aws bedrock-runtime invoke-model \
-  --model-id eu.amazon.nova-micro-v1:0 \
+  --model-id eu.anthropic.claude-haiku-4-5-20251001-v1:0 \
   --content-type application/json --accept application/json \
   --body fileb:///tmp/test.json \
   --profile personal-pi /dev/stdout
@@ -143,7 +143,8 @@ terraform -chdir=infra plan
 # 4. Deploy everything
 terraform -chdir=infra apply
 
-# 5. Store the GitHub token for the PR tool (requires repo scope, or pull_requests:write for fine-grained tokens)
+# 5. Store the GitHub token for the PR tool
+#    Fine-grained PAT permissions required: Contents (read), Pull requests (read/write), Metadata (read)
 aws secretsmanager put-secret-value \
   --secret-id pi-agent/github-pr-token \
   --secret-string "ghp_your_token_here" \
