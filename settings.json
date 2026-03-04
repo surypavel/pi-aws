@@ -1,4 +1,0 @@
-{
-  "defaultProvider": "amazon-bedrock",
-  "defaultModel": "eu.amazon.nova-micro-v1:0"
-}
