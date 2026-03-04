@@ -1,3 +1,9 @@
+variable "ui_password" {
+  description = "Password for the pi-aws web UI (HTTP Basic Auth, username is 'pi')"
+  type        = string
+  sensitive   = true
+}
+
 variable "enable_budget" {
   type        = bool
   default     = false

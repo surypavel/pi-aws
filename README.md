@@ -11,6 +11,7 @@ This guide covers the end-to-end setup for running an autonomous coding agent (l
 3. Bedrock Model Access
 4. Deploy the Infrastructure (Terraform)
 5. Agent Deployment (Pi)
+6. Web Frontend
 
 ---
 
@@ -214,3 +215,57 @@ No credentials or profile needed — the container automatically gets the task r
 ```
 
 Scripts: [`start-pi.sh`](start-pi.sh) | [`stop-pi.sh`](stop-pi.sh) | [`status-pi.sh`](status-pi.sh) | [`build-push.sh`](build-push.sh)
+
+---
+
+## 6. Web Frontend
+
+A single-page HTML app served via **CloudFront + S3**, protected by **HTTP Basic Auth** enforced at the CloudFront edge — no login form in the UI, the browser shows its native dialog.
+
+### Architecture
+
+```
+Browser
+  → CloudFront Function (checks Authorization: Basic header)
+      → S3 (serves index.html)          username: pi
+      → API Gateway (future, /api/*)    password: var.ui_password
+```
+
+Key resources (all in [`frontend.tf`](frontend.tf)):
+
+| Resource | Purpose |
+|---|---|
+| `aws_s3_bucket.frontend` | Private bucket, named `pi-agent-frontend-{account-id}` |
+| `aws_cloudfront_origin_access_control` | Lets CloudFront read S3 without making the bucket public |
+| `aws_cloudfront_distribution.frontend` | Edge distribution, HTTPS-only, `PriceClass_100` (US + Europe), no caching |
+| `aws_cloudfront_function.basic_auth` | Viewer-request function — returns 401 if `Authorization` header is missing or wrong |
+| `aws_s3_object.index_html` | Uploads [`frontend/index.html`](frontend/index.html); re-uploaded automatically when the file changes (`etag`) |
+
+### Deploy
+
+1. Add the password to `terraform.tfvars` (this file is gitignored):
+
+```
+ui_password = "your-secure-password"
+```
+
+The username is fixed as **`pi`**.
+
+2. Apply:
+
+```bash
+terraform apply
+terraform output frontend_url
+```
+
+CloudFront distributions take 5–10 minutes to create. Updates (e.g. attaching the auth function to an existing distribution) take 2–5 minutes.
+
+### Current state
+
+The frontend is fully deployed and password-protected, but the **backend API does not exist yet** — start/stop/logs buttons will silently fail. A yellow banner is shown in the UI until `const API = ""` is replaced with the real API Gateway URL (done automatically by Terraform once the backend is added).
+
+### What's next
+
+- Lambda functions: `POST /start`, `GET /tasks`, `GET /logs/{taskId}`, `POST /stop/{taskId}`
+- API Gateway (HTTP API v2) wired to the Lambdas
+- CloudFront behaviour for `/api/*` pointing at API Gateway — the same Basic Auth function then covers both frontend and API with one password
