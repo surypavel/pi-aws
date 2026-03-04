@@ -30,6 +30,7 @@ docker build --platform linux/arm64 -t "$IMAGE" "$REPO_DIR"
 echo "Starting pi..."
 docker run -it --rm \
   -v "$HOME/.aws":/root/.aws:ro \
+  --tmpfs /root/.aws/cli/cache \
   -v "$REPO_DIR/.pi":/root/.pi/agent \
   -v "$WORKSPACE":/workspace \
   -w /workspace \
