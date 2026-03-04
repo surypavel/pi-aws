@@ -1,0 +1,5 @@
+{
+  "defaultProvider": "amazon-bedrock",
+  "defaultModel": "eu.amazon.nova-micro-v1:0",
+  "lastChangelogVersion": "0.55.4"
+}
