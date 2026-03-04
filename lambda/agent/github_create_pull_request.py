@@ -50,4 +50,7 @@ def handler(event, context):
             }
     except urllib.error.HTTPError as e:
         error_body = json.loads(e.read())
-        return {"status": "error", "message": error_body.get("message", str(e))}
+        result = {"status": "error", "message": error_body.get("message", str(e))}
+        if error_body.get("errors"):
+            result["errors"] = error_body["errors"]
+        return result
