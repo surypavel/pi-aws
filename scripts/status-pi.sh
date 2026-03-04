@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-CLUSTER=$(terraform output -raw cluster_name)
+CLUSTER=$(terraform -chdir=infra output -raw cluster_name)
 
 TASK_ARNS=$(aws ecs list-tasks --cluster "$CLUSTER" --desired-status RUNNING --profile personal-pi --query 'taskArns[]' --output text)
 

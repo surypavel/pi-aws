@@ -120,28 +120,28 @@ The infrastructure is split across several `.tf` files:
 
 | File | What it creates |
 |---|---|
-| [`main.tf`](main.tf) | VPC, security group, ECR repos, ECS cluster & task definition, IAM roles (`PiEcsExecutionRole`, `PiAgentRole`), CloudWatch log group, Secrets Manager secrets, agent tool Lambdas (`pi-agent-jira-bridge`, `pi-agent-github-create-pull-request`) |
-| [`frontend.tf`](frontend.tf) | S3 bucket, CloudFront OAC, CloudFront distribution, CloudFront Function (Basic Auth), CloudFront `/api/*` behaviour, S3 upload of `index.html` |
-| [`api.tf`](api.tf) | `PiApiLambdaRole`, four API Lambda functions, API Gateway HTTP API (stage `api`) |
-| [`budget.tf`](budget.tf) | Optional monthly budget alerts and cost anomaly detection |
-| [`variables.tf`](variables.tf) | `ui_password`, `enable_budget`, `budget_limit`, `budget_alert_email` |
+| [`infra/main.tf`](infra/main.tf) | VPC, security group, ECR repos, ECS cluster & task definition, IAM roles (`PiEcsExecutionRole`, `PiAgentRole`), CloudWatch log group, Secrets Manager secrets, agent tool Lambdas (`pi-agent-jira-bridge`, `pi-agent-github-create-pull-request`) |
+| [`infra/frontend.tf`](infra/frontend.tf) | S3 bucket, CloudFront OAC, CloudFront distribution, CloudFront Function (Basic Auth), CloudFront `/api/*` behaviour, S3 upload of `index.html` |
+| [`infra/api.tf`](infra/api.tf) | `PiApiLambdaRole`, four API Lambda functions, API Gateway HTTP API (stage `api`) |
+| [`infra/budget.tf`](infra/budget.tf) | Optional monthly budget alerts and cost anomaly detection |
+| [`infra/variables.tf`](infra/variables.tf) | `ui_password`, `enable_budget`, `budget_limit`, `budget_alert_email` |
 
 ### Steps
 
 ```bash
 # 1. Create terraform.tfvars (gitignored — never commit this)
-cat > terraform.tfvars <<'EOF'
+cat > infra/terraform.tfvars <<'EOF'
 ui_password = "your-secure-password"
 EOF
 
 # 2. First-time init (downloads the AWS provider)
-terraform init
+terraform -chdir=infra init
 
 # 3. Preview
-terraform plan
+terraform -chdir=infra plan
 
 # 4. Deploy everything
-terraform apply
+terraform -chdir=infra apply
 
 # 5. Store the GitHub token for the PR tool (requires repo scope, or pull_requests:write for fine-grained tokens)
 aws secretsmanager put-secret-value \
@@ -150,7 +150,7 @@ aws secretsmanager put-secret-value \
   --profile personal-pi
 
 # 6. Print the frontend URL
-terraform output frontend_url
+terraform -chdir=infra output frontend_url
 ```
 
 > All Lambda zips (`lambda_api.zip`, `lambda_agent_*.zip`) are built automatically by
@@ -185,9 +185,9 @@ This builds a `linux/amd64` image (required by Fargate) and pushes it to ECR. Ru
 ### Access
 
 ```
-URL:      terraform output -raw frontend_url
+URL:      terraform -chdir=infra output -raw frontend_url
 Username: pi
-Password: value of ui_password in terraform.tfvars
+Password: value of ui_password in infra/terraform.tfvars
 ```
 
 The browser shows its native Basic Auth dialog. The same credential protects every `/api/*` call — no separate auth in the Lambda code.
@@ -195,8 +195,8 @@ The browser shows its native Basic Auth dialog. The same credential protects eve
 ### How it works
 
 - **[`frontend/index.html`](frontend/index.html)** — single-page app; `const API = "/api"` calls the same CloudFront domain, so no CORS is needed
-- **[`frontend.tf`](frontend.tf)** — S3 + CloudFront for the HTML; `etag = filemd5(...)` triggers automatic re-upload when the file changes; `/api/*` behaviour proxies to API Gateway
-- **[`api.tf`](api.tf)** — four Lambda functions sharing one zip + API Gateway HTTP API; stage named `api` so `/api/start` routes to the `POST /start` handler without any URL rewriting
+- **[`infra/frontend.tf`](infra/frontend.tf)** — S3 + CloudFront for the HTML; `etag = filemd5(...)` triggers automatic re-upload when the file changes; `/api/*` behaviour proxies to API Gateway
+- **[`infra/api.tf`](infra/api.tf)** — four Lambda functions sharing one zip + API Gateway HTTP API; stage named `api` so `/api/start` routes to the `POST /start` handler without any URL rewriting
 - **[`lambda/api/`](lambda/api/)** — Python 3.12 handlers
 
 ### Lambda handlers
@@ -225,10 +225,10 @@ Two distinct Lambda roles — the trust flows are opposite:
 
 ```bash
 # After changing Lambda code or index.html:
-terraform apply
+terraform -chdir=infra apply
 
 # After changing the Docker image:
-./scripts/build-push.sh && terraform apply
+./scripts/build-push.sh && terraform -chdir=infra apply
 ```
 
 ---
@@ -290,9 +290,9 @@ All tests use `unittest.mock` — no AWS credentials or network access needed.
 ### Adding a new agent tool
 
 1. Create `lambda/agent/<tool_name>.py` with a `handler(event, context)` function.
-2. Add `"<tool_name>"` to the `agent_tools` set in [`main.tf`](main.tf).
+2. Add `"<tool_name>"` to the `agent_tools` set in [`infra/main.tf`](infra/main.tf).
 3. Add tests to [`tests/test_agent_tools.py`](tests/test_agent_tools.py).
-4. Run `terraform apply` — Terraform zips and deploys the new Lambda automatically.
+4. Run `terraform -chdir=infra apply` — Terraform zips and deploys the new Lambda automatically.
 
 ### Smoke test (against live deployment)
 
@@ -308,4 +308,4 @@ Checks (all via the live CloudFront URL):
 4. Frontend without credentials → 401
 5. Frontend with credentials → 200
 
-`API_URL` and `FRONTEND_URL` are read from `terraform output` if not set explicitly.
+`API_URL` and `FRONTEND_URL` are read from `terraform -chdir=infra output` if not set explicitly.

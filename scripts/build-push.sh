@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-ECR_URL=$(terraform output -raw ecr_repo_url)
-PROXY_ECR_URL=$(terraform output -raw git_proxy_ecr_repo_url)
+ECR_URL=$(terraform -chdir=infra output -raw ecr_repo_url)
+PROXY_ECR_URL=$(terraform -chdir=infra output -raw git_proxy_ecr_repo_url)
 REGISTRY=$(echo "$ECR_URL" | cut -d'/' -f1)
 
 echo "Authenticating Docker to ECR..."

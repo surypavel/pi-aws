@@ -249,8 +249,8 @@ locals {
 data "archive_file" "agent_tool" {
   for_each    = local.agent_tools
   type        = "zip"
-  source_file = "${path.module}/lambda/agent/${each.key}.py"
-  output_path = "${path.module}/dist/lambda_agent_${each.key}.zip"
+  source_file = "${path.module}/../lambda/agent/${each.key}.py"
+  output_path = "${path.module}/../dist/lambda_agent_${each.key}.zip"
 }
 
 resource "aws_lambda_function" "agent_tool" {
@@ -267,8 +267,8 @@ resource "aws_lambda_function" "agent_tool" {
 
 data "archive_file" "github_create_pull_request" {
   type        = "zip"
-  source_file = "${path.module}/lambda/agent/github_create_pull_request.py"
-  output_path = "${path.module}/dist/lambda_agent_github_create_pull_request.zip"
+  source_file = "${path.module}/../lambda/agent/github_create_pull_request.py"
+  output_path = "${path.module}/../dist/lambda_agent_github_create_pull_request.zip"
 }
 
 resource "aws_lambda_function" "github_create_pull_request" {
