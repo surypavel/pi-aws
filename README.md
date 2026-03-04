@@ -1,91 +1,101 @@
-Warning: This is generated completely by LLMs and is being iterated on. 
+# pi-aws: Cloud Coding Agent on AWS
 
-# AWS Cloud Coding Factory: Setup Guide (2026)
+Run [**Pi**](https://github.com/badlogic/pi-mono) as a headless coding agent on AWS ECS Fargate. Submit a prompt from a password-protected web UI, watch the logs stream in real time, kill runaway tasks. Scales to zero — you pay only while Pi is running.
 
-This guide covers the end-to-end setup for running an autonomous coding agent (like **Pi**) on a secure AWS infrastructure using **Terraform**, **Bedrock**, and **ECS Fargate** (scales to zero when idle).
+---
+
+## Architecture
+
+```
+Browser
+  → CloudFront (HTTP Basic Auth at edge)
+      → S3                  GET /*           serves index.html
+      → API Gateway /api/*
+            POST /start      Lambda → ECS RunTask  (injects PROMPT env var)
+            GET  /tasks      Lambda → ECS ListTasks + DescribeTasks
+            GET  /logs/{id}  Lambda → CloudWatch GetLogEvents  (incremental)
+            POST /stop/{id}  Lambda → ECS StopTask
+                                ↓
+                          ECS Fargate task
+                          pi --print "$PROMPT" --no-session
+                          logs → CloudWatch /ecs/pi-coding-agent
+```
+
+One password protects both the HTML page and every API call — enforced by a CloudFront Function before any request reaches an origin.
+
+---
 
 ## Table of Contents
 
-1. Local Tooling (Mac)
-2. AWS Profile Management
-3. Bedrock Model Access
-4. Deploy the Infrastructure (Terraform)
-5. Agent Deployment (Pi)
-6. Web Frontend
+1. [Local Tooling (Mac)](#1-local-tooling-mac)
+2. [AWS Profile Management](#2-aws-profile-management)
+3. [Bedrock Model Access](#3-bedrock-model-access)
+4. [Deploy the Infrastructure (Terraform)](#4-deploy-the-infrastructure-terraform)
+5. [Build and Push the Agent Image](#5-build-and-push-the-agent-image)
+6. [Web Frontend & API](#6-web-frontend--api)
+7. [Running Pi Interactively (optional)](#7-running-pi-interactively-optional)
+8. [Testing](#8-testing)
 
 ---
 
 ## 1. Local Tooling (Mac)
 
-Install the industry-standard CLIs using Homebrew.
-
 ```bash
-# Install AWS CLI
+# AWS CLI
 brew install awscli
 
-# Install Terraform
+# Terraform
 brew tap hashicorp/tap
 brew install hashicorp/tap/terraform
 
-# Session Manager plugin (needed for interactive ECS Exec)
-# Homebrew cask was deprecated (unsigned binary). Use AWS's signed .pkg instead:
-curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/mac_arm64/session-manager-plugin.pkg" -o "session-manager-plugin.pkg"
+# Session Manager plugin (only needed for interactive ECS Exec — see section 7)
+curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/mac_arm64/session-manager-plugin.pkg" \
+  -o session-manager-plugin.pkg
 sudo installer -pkg session-manager-plugin.pkg -target /
-sudo ln -s /usr/local/sessionmanagerplugin/bin/session-manager-plugin /usr/local/bin/session-manager-plugin
+sudo ln -s /usr/local/sessionmanagerplugin/bin/session-manager-plugin /usr/local/bin/
 rm session-manager-plugin.pkg
 
-# Verify installations
-aws --version
-terraform -version
-session-manager-plugin --version
+# Verify
+aws --version && terraform -version
 ```
 
 ---
 
 ## 2. AWS Profile Management
 
-Since you have work credentials, we will use a **Named Profile** for your personal project to keep them isolated.
+Use a named profile to keep personal credentials separate from work credentials.
 
 ```bash
-# 1. First-time only: log in to https://console.aws.amazon.com and create
-#    a root access key (top-right → Security credentials → Create access key).
-#    Configure a temporary profile with it:
+# First time: log in to the AWS Console and create a root access key, then:
 aws configure --profile personal-root
 
-# 2. Create an IAM user with CLI access (do NOT use root keys long-term):
+# Create a least-privilege IAM user for deployments
 aws iam create-user --user-name pi-deployer --profile personal-root
-
-# 3. Attach a scoped-down policy (see pi-deployer-policy.json for the full list):
 aws iam create-policy --policy-name PiDeployerPolicy \
   --policy-document file://pi-deployer-policy.json --profile personal-root
 aws iam attach-user-policy --user-name pi-deployer \
   --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/PiDeployerPolicy \
   --profile personal-root
 
-# 4. Create access keys for the IAM user:
+# Create access keys for the IAM user
 aws iam create-access-key --user-name pi-deployer --profile personal-root
-# ^ Save the AccessKeyId and SecretAccessKey from the output
+# ^ Save the AccessKeyId and SecretAccessKey
 
-# 5. Configure your project profile with the IAM user keys:
+# Configure the project profile
 aws configure --profile personal-pi
-# When prompted, paste the IAM user's Access Key ID, Secret, region 'eu-central-1', output 'json'
+# region: eu-central-1  output: json
 
-# 6. Delete the root access key (you no longer need it):
-#    Go to https://console.aws.amazon.com → Security credentials → Delete the root key
-#    Or: aws iam delete-access-key --access-key-id <ROOT_KEY_ID> --profile personal-root
+# Delete the root access key (no longer needed)
+# AWS Console → Security credentials → Delete root key
 
-# 7. Verify you are using the correct account
+# Verify
 aws sts get-caller-identity --profile personal-pi
 
-# (Optional) Set this as the default for your current terminal session
+# Optional: set as default for the session
 export AWS_PROFILE=personal-pi
 ```
 
----
-
 ### Updating the IAM policy
-
-When [`pi-deployer-policy.json`](pi-deployer-policy.json) changes, update it using root credentials (the deployer cannot modify its own policy):
 
 ```bash
 POLICY_ARN=$(aws iam list-policies --scope Local --profile personal-root \
@@ -95,106 +105,153 @@ aws iam create-policy-version --policy-arn "$POLICY_ARN" \
   --set-as-default --profile personal-root
 ```
 
-> **Note:** IAM policies can have at most 5 versions. If you hit the limit, delete old versions first:
+> IAM policies allow at most 5 versions. Delete old ones if needed:
 > `aws iam list-policy-versions --policy-arn "$POLICY_ARN" --profile personal-root`
-> `aws iam delete-policy-version --policy-arn "$POLICY_ARN" --version-id <OLD_VERSION> --profile personal-root`
 
 ---
 
 ## 3. Bedrock Model Access
 
-We use **Amazon Nova Micro** — Amazon's cheapest Bedrock model. Since it's a first-party Amazon model, it requires **no additional enablement or legal forms**. IAM permissions (handled by Terraform below) are all you need.
-
-To verify access:
+Pi uses **Amazon Nova Micro** (EU inference profile) — Amazon's cheapest Bedrock model, no opt-in forms required.
 
 ```bash
-echo '{"messages":[{"role":"user","content":[{"text":"Say hello"}]}]}' > /tmp/bedrock-test.json
+echo '{"messages":[{"role":"user","content":[{"text":"Say hello"}]}]}' > /tmp/test.json
 aws bedrock-runtime invoke-model \
   --model-id eu.amazon.nova-micro-v1:0 \
-  --content-type application/json \
-  --accept application/json \
-  --body fileb:///tmp/bedrock-test.json \
-  --profile personal-pi \
-  /dev/stdout
+  --content-type application/json --accept application/json \
+  --body fileb:///tmp/test.json \
+  --profile personal-pi /dev/stdout
 ```
-
-If you get a JSON response with the model's reply, you're good to go.
 
 ---
 
 ## 4. Deploy the Infrastructure (Terraform)
 
-The infrastructure is defined in [`main.tf`](main.tf). It uses ECS Fargate so you **only pay while the agent is running** — no idle EC2 costs.
+The infrastructure is split across several `.tf` files:
 
-It provisions:
-- ECS service-linked role (required on first use in an account)
-- Default VPC networking and a security group (outbound-only)
-- ECR repository for the agent Docker image
-- ECS cluster and Fargate task definition
-- IAM roles for ECS task execution, agent permissions (Bedrock, Lambda, ECS Exec), and Lambda
-- CloudWatch log group (7-day retention)
-- Lambda function (Git bridge) — the handler is in [`lambda/index.py`](lambda/index.py), which will eventually hold your GitLab/Jira tokens
-- Optional monthly budget alerts and cost anomaly detection ([`budget.tf`](budget.tf), configured via [`variables.tf`](variables.tf))
+| File | What it creates |
+|---|---|
+| [`main.tf`](main.tf) | VPC, security group, ECR repos, ECS cluster & task definition, IAM roles (`PiEcsExecutionRole`, `PiAgentRole`), CloudWatch log group, Secrets Manager secret, `GitLab-Bridge` Lambda |
+| [`frontend.tf`](frontend.tf) | S3 bucket, CloudFront OAC, CloudFront distribution, CloudFront Function (Basic Auth), CloudFront `/api/*` behaviour, S3 upload of `index.html` |
+| [`api.tf`](api.tf) | `PiApiLambdaRole`, four API Lambda functions, API Gateway HTTP API (stage `api`) |
+| [`budget.tf`](budget.tf) | Optional monthly budget alerts and cost anomaly detection |
+| [`variables.tf`](variables.tf) | `ui_password`, `enable_budget`, `budget_limit`, `budget_alert_email` |
 
-### Steps to deploy
-
-Run these commands in order:
+### Steps
 
 ```bash
-# 1. Package the Lambda code (Terraform needs this zip to exist before apply)
+# 1. Create terraform.tfvars (gitignored — never commit this)
+cat > terraform.tfvars <<'EOF'
+ui_password = "your-secure-password"
+EOF
+
+# 2. Package the GitLab-Bridge Lambda (Terraform needs the zip to exist on first apply)
 zip -j lambda_function.zip lambda/index.py
 
-# 2. Initialize Terraform (first time only — downloads the AWS provider)
+# 3. First-time init (downloads the AWS provider)
 terraform init
 
-# 3. Preview what will be created
+# 4. Preview
 terraform plan
 
-# 4. Create all resources (VPC, ECR, ECS, IAM, Lambda, CloudWatch — everything in one go)
+# 5. Deploy everything
 terraform apply
+
+# 6. Print the frontend URL
+terraform output frontend_url
 ```
 
-After `terraform apply` completes, Terraform will print output values (ECR URL, cluster name, etc.) that are used in the next steps.
+> `lambda_api.zip` (the API backend) is built automatically by Terraform's `archive_file`
+> data source — you do not need to zip it manually.
+
+CloudFront distributions take **5–10 minutes** to create on first deploy; subsequent updates take **2–5 minutes**.
 
 ---
 
-## 5. Agent Deployment (Pi)
+## 5. Build and Push the Agent Image
 
-### Dockerfile
+The container entry point ([`entrypoint.sh`](entrypoint.sh)) has two modes:
 
-The container is defined in [`Dockerfile`](Dockerfile). It includes [`models.json`](models.json) (adds the EU inference profile model to the built-in Bedrock provider), [`settings.json`](settings.json) (sets Nova Micro EU as default), and [`watchdog.sh`](watchdog.sh) (auto-stops the container after inactivity). The image is built for `linux/amd64` (required by Fargate).
+| Condition | Behaviour |
+|---|---|
+| `PROMPT` env var is set | `pi --print "$PROMPT" --no-session` — headless, exits when done |
+| `PROMPT` is not set | Falls back to [`watchdog.sh`](watchdog.sh) — interactive, auto-stops after 10 min idle |
 
-The AWS CLI v2 is installed in the container image so you can call AWS services (e.g., Lambda) directly from the interactive shell. An alternative would be to use the Node.js AWS SDK (`@aws-sdk/client-lambda`, ~5MB), but the full CLI (~150MB) was chosen for convenience — it supports ad-hoc debugging (`aws logs tail`, `aws s3 cp`, etc.) without writing scripts. Both approaches use the same ECS task role credentials from the metadata endpoint; no security difference.
-
-### Build and Push to ECR
-
-Use [`build-push.sh`](build-push.sh) to build the Docker image and push it to ECR:
+The frontend always sets `PROMPT` via ECS container overrides. The interactive fallback exists so `start-pi.sh` still works for debugging sessions.
 
 ```bash
 chmod +x build-push.sh
 ./build-push.sh
 ```
 
-### Run on Demand
+This builds a `linux/amd64` image (required by Fargate) and pushes it to ECR. Run it after any change to the `Dockerfile`, `entrypoint.sh`, or files copied into the image.
 
-Use [`start-pi.sh`](start-pi.sh) to launch the agent:
+---
 
-```bash
-chmod +x start-pi.sh
-./start-pi.sh
+## 6. Web Frontend & API
 
-# Inside the container, Pi starts with Nova Micro (EU) by default:
-pi
+### Access
 
-# The container auto-stops after 10 min of inactivity (no pi/node process).
-# Grace period: 30 min after startup to give you time to connect.
+```
+URL:      terraform output -raw frontend_url
+Username: pi
+Password: value of ui_password in terraform.tfvars
 ```
 
-### Calling Lambda from Inside the Container
+The browser shows its native Basic Auth dialog. The same credential protects every `/api/*` call — no separate auth in the Lambda code.
 
-The ECS task role (`PiAgentRole`) grants `lambda:InvokeFunction` on the `GitLab-Bridge` function. From inside the container:
+### How it works
+
+- **[`frontend/index.html`](frontend/index.html)** — single-page app; `const API = "/api"` calls the same CloudFront domain, so no CORS is needed
+- **[`frontend.tf`](frontend.tf)** — S3 + CloudFront for the HTML; `etag = filemd5(...)` triggers automatic re-upload when the file changes; `/api/*` behaviour proxies to API Gateway
+- **[`api.tf`](api.tf)** — four Lambda functions sharing one zip + API Gateway HTTP API; stage named `api` so `/api/start` routes to the `POST /start` handler without any URL rewriting
+- **[`lambda/api/`](lambda/api/)** — Python 3.12 handlers
+
+### Lambda handlers
+
+| File | Route | What it does |
+|---|---|---|
+| [`start.py`](lambda/api/start.py) | `POST /api/start` | ECS `RunTask`, injects `PROMPT` as env var override |
+| [`tasks.py`](lambda/api/tasks.py) | `GET /api/tasks` | Lists RUNNING + last 20 STOPPED tasks, extracts prompts from overrides |
+| [`logs.py`](lambda/api/logs.py) | `GET /api/logs/{taskId}` | CloudWatch `GetLogEvents` with `nextToken` for incremental polling; also returns task status |
+| [`stop.py`](lambda/api/stop.py) | `POST /api/stop/{taskId}` | ECS `StopTask` |
+
+Log stream names are deterministic: `pi/pi-agent/{taskId}` (derived from `awslogs-stream-prefix = "pi"` in the task definition), so `logs.py` can fetch them directly without a lookup.
+
+### IAM separation
+
+Two distinct Lambda roles — the trust flows are opposite:
+
+| Role | Used by | Permissions |
+|---|---|---|
+| `PiLambdaExecRole` | `GitLab-Bridge` (tool called *by* Pi from inside ECS) | Basic execution only |
+| `PiApiLambdaRole` | API Lambdas (called *by* API Gateway from outside) | ECS ops + `iam:PassRole` + CloudWatch read |
+
+`PiAgentRole` (the ECS task role) grants `lambda:InvokeFunction` on `GitLab-Bridge` — Pi can call its tools, but has no access to the API Lambdas.
+
+### Redeploy after changes
 
 ```bash
+# After changing Lambda code or index.html:
+terraform apply
+
+# After changing the Docker image:
+./build-push.sh && terraform apply
+```
+
+---
+
+## 7. Running Pi Interactively (optional)
+
+For debugging sessions — opens an ECS Exec shell into a running container:
+
+```bash
+./start-pi.sh    # launches a task and connects via ECS Exec
+
+# Inside the container:
+pi               # interactive Pi session (watchdog auto-stops after 10 min idle)
+
+# Call the GitLab-Bridge Lambda directly:
 aws lambda invoke \
   --function-name GitLab-Bridge \
   --payload '{"action": "test"}' \
@@ -202,70 +259,40 @@ aws lambda invoke \
   /dev/stdout
 ```
 
-No credentials or profile needed — the container automatically gets the task role via the ECS metadata endpoint.
-
-### Monitor and Stop
+No credentials needed inside the container — it automatically gets the `PiAgentRole` credentials via the ECS metadata endpoint.
 
 ```bash
-# Check if anything is running
-./status-pi.sh
-
-# Manually stop all running tasks
-./stop-pi.sh
+./status-pi.sh   # list running tasks
+./stop-pi.sh     # stop all running tasks
 ```
 
-Scripts: [`start-pi.sh`](start-pi.sh) | [`stop-pi.sh`](stop-pi.sh) | [`status-pi.sh`](status-pi.sh) | [`build-push.sh`](build-push.sh)
+> Requires the Session Manager plugin from section 1.
 
 ---
 
-## 6. Web Frontend
+## 8. Testing
 
-A single-page HTML app served via **CloudFront + S3**, protected by **HTTP Basic Auth** enforced at the CloudFront edge — no login form in the UI, the browser shows its native dialog.
-
-### Architecture
-
-```
-Browser
-  → CloudFront Function (checks Authorization: Basic header)
-      → S3 (serves index.html)          username: pi
-      → API Gateway (future, /api/*)    password: var.ui_password
-```
-
-Key resources (all in [`frontend.tf`](frontend.tf)):
-
-| Resource | Purpose |
-|---|---|
-| `aws_s3_bucket.frontend` | Private bucket, named `pi-agent-frontend-{account-id}` |
-| `aws_cloudfront_origin_access_control` | Lets CloudFront read S3 without making the bucket public |
-| `aws_cloudfront_distribution.frontend` | Edge distribution, HTTPS-only, `PriceClass_100` (US + Europe), no caching |
-| `aws_cloudfront_function.basic_auth` | Viewer-request function — returns 401 if `Authorization` header is missing or wrong |
-| `aws_s3_object.index_html` | Uploads [`frontend/index.html`](frontend/index.html); re-uploaded automatically when the file changes (`etag`) |
-
-### Deploy
-
-1. Add the password to `terraform.tfvars` (this file is gitignored):
-
-```
-ui_password = "your-secure-password"
-```
-
-The username is fixed as **`pi`**.
-
-2. Apply:
+### Unit tests
 
 ```bash
-terraform apply
-terraform output frontend_url
+pip install pytest   # one-time
+pytest tests/test_lambdas.py -v
 ```
 
-CloudFront distributions take 5–10 minutes to create. Updates (e.g. attaching the auth function to an existing distribution) take 2–5 minutes.
+Tests all four handlers with `unittest.mock` — no AWS credentials or network access needed.
 
-### Current state
+### Smoke test (against live deployment)
 
-The frontend is fully deployed and password-protected, but the **backend API does not exist yet** — start/stop/logs buttons will silently fail. A yellow banner is shown in the UI until `const API = ""` is replaced with the real API Gateway URL (done automatically by Terraform once the backend is added).
+```bash
+API_PASSWORD=your-password ./tests/smoke-test.sh
+```
 
-### What's next
+Checks (all via the live CloudFront URL):
 
-- Lambda functions: `POST /start`, `GET /tasks`, `GET /logs/{taskId}`, `POST /stop/{taskId}`
-- API Gateway (HTTP API v2) wired to the Lambdas
-- CloudFront behaviour for `/api/*` pointing at API Gateway — the same Basic Auth function then covers both frontend and API with one password
+1. `GET /api/tasks` → 200
+2. `POST /api/start` with empty body → 400
+3. `GET /api/logs/nonexistent` → 200 with empty `lines` array
+4. Frontend without credentials → 401
+5. Frontend with credentials → 200
+
+`API_URL` and `FRONTEND_URL` are read from `terraform output` if not set explicitly.
