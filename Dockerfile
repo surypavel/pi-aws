@@ -10,5 +10,6 @@ COPY .pi/AGENTS.md /root/.pi/agent/AGENTS.md
 COPY models.json /root/.pi/agent/models.json
 COPY settings.json /root/.pi/agent/settings.json
 COPY watchdog.sh /watchdog.sh
-RUN chmod +x /watchdog.sh
-CMD ["/watchdog.sh"]
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /watchdog.sh /entrypoint.sh
+CMD ["/entrypoint.sh"]

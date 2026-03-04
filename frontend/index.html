@@ -149,18 +149,16 @@
   </section>
 
   <script>
-    const API = "";   // injected by Terraform once backend is deployed
+    const API = "/api";
 
-    const logState = {};   // taskId -> { lines: [], nextToken: null }
-
-    if (!API) document.getElementById("api-banner").style.display = "block";
+    const logState  = {};         // taskId -> { lines: [], nextToken: null }
+    const openPanels = new Set(); // taskIds whose log panel should be open
 
     function headers() {
       return { "Content-Type": "application/json" };
     }
 
     async function apiFetch(path, opts) {
-      if (!API) throw new Error("API_NOT_CONFIGURED");
       return fetch(API + path, { ...opts, headers: headers() });
     }
 
@@ -222,9 +220,26 @@
           <div id="logs-${t.taskId}" class="log-panel"></div>
         </div>`;
       }).join("");
+
+      // Restore panels that were open before the re-render
+      for (const taskId of openPanels) {
+        const panel = document.getElementById("logs-" + taskId);
+        if (panel) { panel.classList.add("open"); renderLogPanel(taskId, panel); }
+      }
+    }
+
+    function renderLogPanel(taskId, panel) {
+      const state = logState[taskId];
+      if (!state || !state.lines.length) {
+        panel.innerHTML = '<span class="log-empty">No logs yet…</span>';
+      } else {
+        panel.textContent = state.lines.join("\n");
+      }
+      panel.scrollTop = panel.scrollHeight;
     }
 
     function openLogs(taskId) {
+      openPanels.add(taskId);
       const panel = document.getElementById("logs-" + taskId);
       if (panel) { panel.classList.add("open"); pollLogs(taskId); }
     }
@@ -234,9 +249,15 @@
       if (!panel) return;
       if (panel.classList.contains("open")) {
         panel.classList.remove("open");
+        openPanels.delete(taskId);
       } else {
         panel.classList.add("open");
-        if (!logState[taskId]) pollLogs(taskId);
+        openPanels.add(taskId);
+        if (!logState[taskId]) {
+          pollLogs(taskId);
+        } else {
+          renderLogPanel(taskId, panel); // show cached logs immediately
+        }
       }
     }
 
@@ -251,15 +272,14 @@
         state.nextToken = data.nextToken || null;
 
         const panel = document.getElementById("logs-" + taskId);
-        if (panel) {
-          panel.textContent = state.lines.length ? state.lines.join("\n") : "";
-          if (!state.lines.length) panel.innerHTML = '<span class="log-empty">No logs yet…</span>';
-          panel.scrollTop = panel.scrollHeight;
-        }
+        if (panel && panel.classList.contains("open")) renderLogPanel(taskId, panel);
 
-        if (data.status === "RUNNING") setTimeout(() => pollLogs(taskId), 3000);
-        else loadTasks();
-      } catch { /* API not configured or task gone */ }
+        if (data.status === "RUNNING") {
+          setTimeout(() => pollLogs(taskId), 3000);
+        } else {
+          loadTasks(); // update status badge; renderTasks() restores open panels
+        }
+      } catch { /* silently ignore */ }
     }
 
     async function stopTask(taskId) {
