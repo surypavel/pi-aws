@@ -285,7 +285,7 @@ resource "aws_lambda_function" "github_create_pull_request" {
   }
 }
 
-# --- Outputs (used by start-pi.sh) ---
+# --- Outputs (used by scripts/start-pi.sh) ---
 
 output "ecr_repo_url" {
   value = aws_ecr_repository.pi_agent.repository_url
