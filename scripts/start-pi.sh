@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-CLUSTER=$(terraform output -raw cluster_name)
-TASK_DEF=$(terraform output -raw task_definition)
-SG=$(terraform output -raw security_group_id)
-SUBNETS=$(terraform output -raw subnet_ids)
+CLUSTER=$(terraform -chdir=infra output -raw cluster_name)
+TASK_DEF=$(terraform -chdir=infra output -raw task_definition)
+SG=$(terraform -chdir=infra output -raw security_group_id)
+SUBNETS=$(terraform -chdir=infra output -raw subnet_ids)
 
 echo "Starting Pi agent..."
 TASK_ARN=$(aws ecs run-task \

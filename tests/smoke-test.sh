@@ -8,7 +8,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-FRONTEND_URL="${FRONTEND_URL:-$(terraform output -raw frontend_url)}"
+FRONTEND_URL="${FRONTEND_URL:-$(terraform -chdir=infra output -raw frontend_url)}"
 API_URL="${API_URL:-${FRONTEND_URL}/api}"
 API_PASSWORD="${API_PASSWORD:-pipi}"
 CREDS="pi:${API_PASSWORD}"

@@ -49,8 +49,8 @@ resource "aws_iam_role_policy" "api_lambda_policy" {
 
 data "archive_file" "api_lambda" {
   type        = "zip"
-  source_dir  = "${path.module}/lambda/api"
-  output_path = "${path.module}/dist/lambda_api.zip"
+  source_dir  = "${path.module}/../lambda/api"
+  output_path = "${path.module}/../dist/lambda_api.zip"
 }
 
 # Shared environment variables injected into every Lambda
