@@ -4,155 +4,78 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>pi coding agent</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: 'Courier New', monospace;
-      background: #0f0f0f;
-      color: #d0d0d0;
-      min-height: 100vh;
-      padding: 2rem;
-    }
-
-    h1 { color: #7eb8f7; font-size: 1.4rem; margin-bottom: 2rem; letter-spacing: 0.05em; }
-
-    section { margin-bottom: 2rem; }
-
-    label { display: block; font-size: 0.8rem; color: #777; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
-
-    textarea {
-      width: 100%;
-      background: #1a1a1a;
-      color: #d0d0d0;
-      border: 1px solid #333;
-      padding: 10px 12px;
-      font-family: inherit;
-      font-size: 0.9rem;
-      outline: none;
-      height: 100px;
-      resize: vertical;
-    }
-    textarea:focus { border-color: #555; }
-
-    .row { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
-
-    button {
-      background: #1e4a8a;
-      color: #d0d0d0;
-      border: none;
-      padding: 9px 18px;
-      font-family: inherit;
-      font-size: 0.85rem;
-      cursor: pointer;
-      white-space: nowrap;
-    }
-    button:hover { background: #2a5fa8; }
-    button.danger { background: #7a1e1e; }
-    button.danger:hover { background: #9a2a2a; }
-    button:disabled { opacity: 0.4; cursor: default; }
-
-    .msg { font-size: 0.8rem; color: #e06c6c; margin-left: 8px; }
-    .msg.ok { color: #6cc97a; }
-
-    hr { border: none; border-top: 1px solid #222; margin: 2rem 0; }
-
-    h2 { color: #7eb8f7; font-size: 1rem; margin-bottom: 1rem; }
-
-    .task {
-      border: 1px solid #2a2a2a;
-      margin-bottom: 8px;
-    }
-    .task-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 10px 12px;
-      background: #161616;
-    }
-    .task-meta { display: flex; gap: 12px; align-items: center; }
-    .badge {
-      font-size: 0.7rem;
-      padding: 2px 7px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .badge.RUNNING  { background: #1a4a2a; color: #6cc97a; }
-    .badge.STOPPED  { background: #2a2a2a; color: #888; }
-    .badge.PENDING  { background: #4a3a10; color: #c9a83c; }
-    .task-id   { font-size: 0.75rem; color: #555; }
-    .task-time { font-size: 0.75rem; color: #555; }
-    .task-prompt {
-      padding: 8px 12px;
-      font-size: 0.8rem;
-      color: #888;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      border-top: 1px solid #1e1e1e;
-    }
-    .task-actions { display: flex; gap: 6px; }
-    .task-actions button { padding: 5px 12px; font-size: 0.75rem; }
-
-    .log-panel {
-      display: none;
-      background: #0a0a0a;
-      padding: 12px;
-      font-size: 0.78rem;
-      max-height: 260px;
-      overflow-y: auto;
-      border-top: 1px solid #1e1e1e;
-      white-space: pre-wrap;
-      word-break: break-all;
-      color: #aaa;
-    }
+    /* Styles for dynamically-injected badge classes */
+    .badge { font-size: 0.6rem; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700; }
+    .badge.RUNNING { background: #dcfce7; color: #15803d; }
+    .badge.STOPPED { background: #f3f4f6; color: #6b7280; }
+    .badge.PENDING { background: #fef9c3; color: #a16207; }
+    .log-panel { display: none; }
     .log-panel.open { display: block; }
-    .log-empty { color: #444; font-style: italic; }
-
-    #task-list-empty { color: #444; font-size: 0.85rem; padding: 8px 0; }
-
-    .api-banner {
-      background: #2a1a0a;
-      border: 1px solid #5a3a10;
-      color: #c9a83c;
-      padding: 10px 14px;
-      font-size: 0.8rem;
-      margin-bottom: 2rem;
-    }
+    .input-card:focus-within { border-color: rgba(139, 92, 246, 0.4); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.08); }
   </style>
 </head>
-<body>
-  <h1>pi coding agent</h1>
+<body class="min-h-screen bg-[#f7f7f8] text-gray-900 antialiased">
 
-  <div id="api-banner" class="api-banner" style="display:none">
-    Backend not yet configured — API calls will fail. Deploy the API then refresh.
+  <div class="flex flex-col items-center min-h-screen px-4 py-20">
+
+    <!-- Heading -->
+    <div class="text-center mb-10">
+      <h1 class="text-[2.6rem] font-semibold text-gray-900 tracking-tight leading-tight mb-2">
+        What can pi do for you?
+      </h1>
+      <p class="text-gray-400 text-sm">Describe a task and the agent will handle it</p>
+    </div>
+
+    <div class="w-full max-w-2xl">
+
+      <!-- API warning -->
+      <div id="api-banner" style="display:none"
+        class="mb-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 px-4 py-3 text-sm">
+        Backend not yet configured — API calls will fail. Deploy the API then refresh.
+      </div>
+
+      <!-- Input card -->
+      <div class="input-card rounded-2xl bg-white border border-gray-200 shadow-sm overflow-hidden transition-all duration-200">
+        <textarea
+          id="prompt"
+          placeholder="Fix the authentication bug in auth.py…"
+          class="w-full bg-transparent text-gray-900 placeholder-gray-400 px-5 pt-5 pb-3 text-base resize-none outline-none min-h-[160px] leading-relaxed"
+        ></textarea>
+        <div class="flex items-center px-4 pb-4 pt-2 border-t border-gray-100">
+          <span id="start-msg" class="text-sm text-red-500"></span>
+          <button
+            id="start-btn"
+            onclick="startTask()"
+            class="ml-auto bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-400 hover:to-violet-500 active:scale-[0.97] text-white font-medium px-6 py-2.5 rounded-xl text-sm transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-violet-900/25 cursor-pointer"
+          >
+            Start agent →
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sessions -->
+    <div class="w-full max-w-2xl mt-12">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xs uppercase tracking-[0.15em] text-gray-400 font-medium">Recent sessions</h2>
+        <button onclick="loadTasks()"
+          class="text-xs text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+          ↻ Refresh
+        </button>
+      </div>
+      <div id="task-list">
+        <p id="task-list-empty" class="text-sm text-gray-700">No sessions yet.</p>
+      </div>
+    </div>
+
   </div>
-
-  <section>
-    <h2>New task</h2>
-    <label>Prompt</label>
-    <textarea id="prompt" placeholder="Fix the authentication bug in auth.py…"></textarea>
-    <div class="row">
-      <button id="start-btn" onclick="startTask()">Start agent</button>
-      <span id="start-msg" class="msg"></span>
-    </div>
-  </section>
-
-  <hr>
-
-  <section>
-    <div class="row" style="margin-top:0; margin-bottom:12px">
-      <h2 style="margin:0">Tasks</h2>
-      <button onclick="loadTasks()" style="padding:5px 12px; font-size:0.75rem">Refresh</button>
-    </div>
-    <div id="task-list"><p id="task-list-empty">No tasks yet.</p></div>
-  </section>
 
   <script>
     const API = "/api";
-
-    const logState  = {};         // taskId -> { lines: [], nextToken: null }
-    const openPanels = new Set(); // taskIds whose log panel should be open
+    const logState   = {};
+    const openPanels = new Set();
 
     function headers() {
       return { "Content-Type": "application/json" };
@@ -164,19 +87,19 @@
 
     async function startTask() {
       const prompt = document.getElementById("prompt").value.trim();
-      const btn = document.getElementById("start-btn");
-      const msg = document.getElementById("start-msg");
+      const btn    = document.getElementById("start-btn");
+      const msg    = document.getElementById("start-msg");
       if (!prompt) { msg.textContent = "Prompt is empty."; return; }
       btn.disabled = true;
       msg.textContent = "";
       try {
-        const res = await apiFetch("/start", { method: "POST", body: JSON.stringify({ prompt }) });
+        const res  = await apiFetch("/start", { method: "POST", body: JSON.stringify({ prompt }) });
         const data = await res.json();
         if (!res.ok) { msg.textContent = data.error || "Failed to start."; return; }
-        msg.className = "msg ok";
+        msg.className   = "text-sm text-emerald-600";
         msg.textContent = "Started: " + data.taskId.slice(0, 8);
         document.getElementById("prompt").value = "";
-        setTimeout(() => { msg.textContent = ""; msg.className = "msg"; }, 4000);
+        setTimeout(() => { msg.textContent = ""; msg.className = "text-sm text-red-500"; }, 4000);
         await loadTasks();
         openLogs(data.taskId);
       } catch (e) {
@@ -188,7 +111,7 @@
 
     async function loadTasks() {
       try {
-        const res = await apiFetch("/tasks");
+        const res  = await apiFetch("/tasks");
         const data = await res.json();
         renderTasks(data.tasks || []);
       } catch { /* silently ignore when API not configured */ }
@@ -197,31 +120,30 @@
     function renderTasks(tasks) {
       const container = document.getElementById("task-list");
       if (!tasks.length) {
-        container.innerHTML = '<p id="task-list-empty">No tasks yet.</p>';
+        container.innerHTML = '<p class="text-sm text-gray-400">No sessions yet.</p>';
         return;
       }
       container.innerHTML = tasks.map(t => {
         const short = t.taskId.slice(0, 8);
         const time  = t.startedAt ? new Date(t.startedAt).toLocaleString() : "";
         return `
-        <div class="task" id="task-${t.taskId}">
-          <div class="task-header">
-            <div class="task-meta">
+        <div id="task-${t.taskId}" class="mb-2 rounded-xl overflow-hidden border border-gray-200 bg-white">
+          <div class="flex items-center justify-between px-4 py-3">
+            <div class="flex items-center gap-3 min-w-0">
               <span class="badge ${t.status}">${t.status}</span>
-              <span class="task-id">${short}</span>
-              ${time ? '<span class="task-time">' + time + '</span>' : ""}
+              <span class="text-xs text-gray-400 font-mono">${short}</span>
+              ${time ? `<span class="text-xs text-gray-400 hidden sm:inline">${time}</span>` : ""}
             </div>
-            <div class="task-actions">
-              ${t.status === "RUNNING" ? '<button class="danger" onclick="stopTask(\'' + t.taskId + '\')">Kill</button>' : ""}
-              <button onclick="toggleLogs('${t.taskId}')">Logs</button>
+            <div class="flex gap-1 ml-3 shrink-0">
+              ${t.status === "RUNNING" ? `<button onclick="stopTask('${t.taskId}')" class="text-xs text-red-500 hover:text-red-700 px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors cursor-pointer">Kill</button>` : ""}
+              <button onclick="toggleLogs('${t.taskId}')" class="text-xs text-gray-400 hover:text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">Logs</button>
             </div>
           </div>
-          <div class="task-prompt">${esc(t.prompt || "(no prompt)")}</div>
-          <div id="logs-${t.taskId}" class="log-panel"></div>
+          <div class="px-4 pb-3 text-xs text-gray-500 truncate border-t border-gray-100 pt-2">${esc(t.prompt || "(no prompt)")}</div>
+          <div id="logs-${t.taskId}" class="log-panel bg-gray-50 px-4 py-3 text-xs font-mono text-gray-600 max-h-64 overflow-y-auto whitespace-pre-wrap break-all border-t border-gray-100"></div>
         </div>`;
       }).join("");
 
-      // Restore panels that were open before the re-render
       for (const taskId of openPanels) {
         const panel = document.getElementById("logs-" + taskId);
         if (panel) { panel.classList.add("open"); renderLogPanel(taskId, panel); }
@@ -231,7 +153,7 @@
     function renderLogPanel(taskId, panel) {
       const state = logState[taskId];
       if (!state || !state.lines.length) {
-        panel.innerHTML = '<span class="log-empty">No logs yet…</span>';
+        panel.innerHTML = '<span class="italic text-gray-400">No logs yet…</span>';
       } else {
         panel.textContent = state.lines.join("\n");
       }
@@ -256,7 +178,7 @@
         if (!logState[taskId]) {
           pollLogs(taskId);
         } else {
-          renderLogPanel(taskId, panel); // show cached logs immediately
+          renderLogPanel(taskId, panel);
         }
       }
     }
@@ -265,8 +187,8 @@
       if (!logState[taskId]) logState[taskId] = { lines: [], nextToken: null };
       const state = logState[taskId];
       try {
-        const qs = state.nextToken ? "?nextToken=" + encodeURIComponent(state.nextToken) : "";
-        const res = await apiFetch("/logs/" + taskId + qs);
+        const qs   = state.nextToken ? "?nextToken=" + encodeURIComponent(state.nextToken) : "";
+        const res  = await apiFetch("/logs/" + taskId + qs);
         const data = await res.json();
         state.lines.push(...(data.lines || []));
         state.nextToken = data.nextToken || null;
@@ -277,7 +199,7 @@
         if (data.status === "RUNNING") {
           setTimeout(() => pollLogs(taskId), 3000);
         } else {
-          loadTasks(); // update status badge; renderTasks() restores open panels
+          loadTasks();
         }
       } catch { /* silently ignore */ }
     }
