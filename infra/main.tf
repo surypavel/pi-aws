@@ -1,3 +1,9 @@
+terraform {
+  required_providers {
+    local = { source = "hashicorp/local" }
+  }
+}
+
 provider "aws" {
   region  = "eu-central-1"
   profile = "personal-pi"
@@ -52,12 +58,6 @@ resource "aws_ecr_repository" "git_proxy" {
 # GitHub PAT for git proxy (injected into the git-proxy container at runtime)
 resource "aws_secretsmanager_secret" "github_token" {
   name = "pi-agent/github-token"
-}
-
-# GitHub PAT for the github_create_pull_request Lambda tool
-# The ECS task role (PiAgentRole) has NO access to this secret — only the Lambda execution role does.
-resource "aws_secretsmanager_secret" "github_pr_token" {
-  name = "pi-agent/github-pr-token"
 }
 
 # --- ECS Cluster ---
@@ -136,10 +136,10 @@ resource "aws_iam_role_policy" "pi_permissions" {
       {
         Action   = "lambda:InvokeFunction",
         Effect   = "Allow",
-        Resource = concat(
-          [for k, v in aws_lambda_function.agent_tool : v.arn],
-          [aws_lambda_function.github_create_pull_request.arn],
-        )
+        Resource = [
+          aws_lambda_function.coin_toss.arn,
+          aws_lambda_function.github_create_pull_request.arn,
+        ]
       },
       {
         Action = [
@@ -222,82 +222,6 @@ resource "aws_ecs_task_definition" "pi_agent" {
   ])
 }
 
-# --- IAM: Lambda Execution Role (agent tools called by Pi) ---
-
-resource "aws_iam_role" "lambda_exec_role" {
-  name = "PiLambdaExecRole"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17", Statement = [{
-      Action = "sts:AssumeRole", Effect = "Allow",
-      Principal = { Service = "lambda.amazonaws.com" }
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-  role       = aws_iam_role.lambda_exec_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-# Allow Lambda tools to read their own secrets (ECS task role has no access to these)
-resource "aws_iam_role_policy" "lambda_secrets" {
-  name = "PiLambdaSecretsPolicy"
-  role = aws_iam_role.lambda_exec_role.id
-  policy = jsonencode({
-    Version = "2012-10-17", Statement = [{
-      Action   = "secretsmanager:GetSecretValue",
-      Effect   = "Allow",
-      Resource = aws_secretsmanager_secret.github_pr_token.arn
-    }]
-  })
-}
-
-# --- Agent Tool Lambdas ---
-# Add a simple tool by adding its name to this set and creating lambda/agent/<name>.py
-
-locals {
-  agent_tools = toset(["coin_toss"])
-}
-
-data "archive_file" "agent_tool" {
-  for_each    = local.agent_tools
-  type        = "zip"
-  source_file = "${path.module}/../lambda/agent/${each.key}.py"
-  output_path = "${path.module}/../dist/lambda_agent_${each.key}.zip"
-}
-
-resource "aws_lambda_function" "agent_tool" {
-  for_each         = local.agent_tools
-  function_name    = "pi-agent-${replace(each.key, "_", "-")}"
-  role             = aws_iam_role.lambda_exec_role.arn
-  handler          = "${each.key}.handler"
-  runtime          = "python3.12"
-  filename         = data.archive_file.agent_tool[each.key].output_path
-  source_code_hash = data.archive_file.agent_tool[each.key].output_base64sha256
-}
-
-# --- github_create_pull_request (dedicated — needs secret access) ---
-
-data "archive_file" "github_create_pull_request" {
-  type        = "zip"
-  source_file = "${path.module}/../lambda/agent/github_create_pull_request.py"
-  output_path = "${path.module}/../dist/lambda_agent_github_create_pull_request.zip"
-}
-
-resource "aws_lambda_function" "github_create_pull_request" {
-  function_name    = "pi-agent-github-create-pull-request"
-  role             = aws_iam_role.lambda_exec_role.arn
-  handler          = "github_create_pull_request.handler"
-  runtime          = "python3.12"
-  filename         = data.archive_file.github_create_pull_request.output_path
-  source_code_hash = data.archive_file.github_create_pull_request.output_base64sha256
-  environment {
-    variables = {
-      GITHUB_TOKEN_SECRET_ARN = aws_secretsmanager_secret.github_pr_token.arn
-    }
-  }
-}
-
 # --- Outputs (used by scripts/start-pi.sh) ---
 
 output "ecr_repo_url" {
@@ -322,12 +246,4 @@ output "security_group_id" {
 
 output "git_proxy_ecr_repo_url" {
   value = aws_ecr_repository.git_proxy.repository_url
-}
-
-output "agent_tool_arns" {
-  value = merge(
-    { for k, v in aws_lambda_function.agent_tool : k => v.arn },
-    { github_create_pull_request = aws_lambda_function.github_create_pull_request.arn },
-  )
-  description = "ARNs of agent tool Lambdas Pi can invoke"
 }

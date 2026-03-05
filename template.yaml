@@ -1,0 +1,20 @@
+"AWSTemplateFormatVersion": "2010-09-09"
+"Globals":
+  "Function":
+    "CodeUri": "lambda/agent/"
+    "Runtime": "python3.12"
+"Resources":
+  "CoinToss":
+    "Properties":
+      "FunctionName": "pi-agent-coin-toss"
+      "Handler": "coin_toss.handler"
+    "Type": "AWS::Serverless::Function"
+  "GithubCreatePullRequest":
+    "Properties":
+      "Environment":
+        "Variables":
+          "GITHUB_TOKEN_SECRET_ARN": "local"
+      "FunctionName": "pi-agent-github-create-pull-request"
+      "Handler": "github_create_pull_request.handler"
+    "Type": "AWS::Serverless::Function"
+"Transform": "AWS::Serverless-2016-10-31"

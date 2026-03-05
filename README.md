@@ -2,6 +2,8 @@
 
 Run [**Pi**](https://github.com/badlogic/pi-mono) as a headless coding agent on AWS ECS Fargate. Submit a prompt from a password-protected web UI, watch the logs stream in real time, kill runaway tasks. Scales to zero — you pay only while Pi is running.
 
+The agent tool Lambdas (`lambda/agent/`) are the primary extension point — each one is a skill available to any coding agent (Pi, Claude Code, or others) that can invoke AWS Lambda. They are designed to be called from the cloud but can also run locally via SAM for development.
+
 ---
 
 ## Architecture
@@ -38,7 +40,8 @@ One password protects both the HTML page and every API call — enforced by a Cl
 5. [Build and Push the Agent Image](#5-build-and-push-the-agent-image)
 6. [Web Frontend & API](#6-web-frontend--api)
 7. [Running Pi Interactively (optional)](#7-running-pi-interactively-optional)
-8. [Testing](#8-testing)
+8. [Local Lambda Development](#8-local-lambda-development)
+9. [Testing](#9-testing)
 
 ---
 
@@ -120,7 +123,8 @@ The infrastructure is split across several `.tf` files:
 
 | File | What it creates |
 |---|---|
-| [`infra/main.tf`](infra/main.tf) | VPC, security group, ECR repos, ECS cluster & task definition, IAM roles (`PiEcsExecutionRole`, `PiAgentRole`), CloudWatch log group, Secrets Manager secrets, agent tool Lambdas (`pi-agent-jira-bridge`, `pi-agent-github-create-pull-request`) |
+| [`infra/main.tf`](infra/main.tf) | VPC, security group, ECR repos, ECS cluster & task definition, IAM roles (`PiEcsExecutionRole`, `PiAgentRole`), CloudWatch log group, `github-token` secret |
+| [`infra/lambdas.tf`](infra/lambdas.tf) | Agent tool Lambdas and their IAM roles/secrets; also generates [`template.yaml`](template.yaml) for local SAM development |
 | [`infra/frontend.tf`](infra/frontend.tf) | S3 bucket, CloudFront OAC, CloudFront distribution, CloudFront Function (Basic Auth), CloudFront `/api/*` behaviour, S3 upload of `index.html` |
 | [`infra/api.tf`](infra/api.tf) | `PiApiLambdaRole`, four API Lambda functions, API Gateway HTTP API (stage `api`) |
 | [`infra/budget.tf`](infra/budget.tf) | Optional monthly budget alerts and cost anomaly detection |
@@ -269,7 +273,68 @@ No credentials needed inside the container — it automatically gets the `PiAgen
 
 ---
 
-## 8. Testing
+## 8. Local Lambda Development
+
+The agent tool Lambdas can be invoked locally without deploying to AWS. This is useful when developing new tools or testing them with a local coding agent (Claude Code, Pi, etc.).
+
+The [`template.yaml`](template.yaml) at the repo root is generated automatically by `terraform apply` from [`infra/lambdas.tf`](infra/lambdas.tf) — it always mirrors the deployed Lambdas.
+
+### Setup (one-time)
+
+```bash
+# SAM CLI
+brew install aws-sam-cli
+
+# Colima (container runtime required by SAM)
+brew install colima
+colima start
+export DOCKER_HOST=unix://$HOME/.colima/docker.sock
+```
+
+### Start the local Lambda endpoint
+
+```bash
+# From repo root — GITHUB_TOKEN bypasses Secrets Manager locally
+GITHUB_TOKEN=ghp_... sam local start-lambda
+# Serves Lambda invoke API on http://localhost:3001
+```
+
+### Invoke a function locally
+
+```bash
+aws lambda invoke \
+  --endpoint-url http://localhost:3001 \
+  --function-name pi-agent-coin-toss \
+  --payload '{}' \
+  --cli-binary-format raw-in-base64-out \
+  /tmp/out.json && cat /tmp/out.json
+```
+
+### Use local Lambdas with a coding agent
+
+Set `AWS_ENDPOINT_URL_LAMBDA` before launching your agent — the AWS CLI and boto3 both pick it up automatically, so no code changes are needed:
+
+```bash
+# Claude Code
+AWS_ENDPOINT_URL_LAMBDA=http://localhost:3001 claude
+
+# Pi
+AWS_ENDPOINT_URL_LAMBDA=http://localhost:3001 pi
+```
+
+All `aws lambda invoke` calls from `.pi/skills/` will automatically route to SAM instead of real AWS Lambda.
+
+### Adding a new agent tool
+
+1. Create `lambda/agent/<tool_name>.py` with a `handler(event, context)` function.
+2. Add a block for it in [`infra/lambdas.tf`](infra/lambdas.tf) (copy an existing one).
+3. Add its ARN to the `lambda:InvokeFunction` resource list in [`infra/main.tf`](infra/main.tf) and to the `agent_tool_arns` output in `lambdas.tf`.
+4. Add corresponding entries to the `sam_template` `Resources` block in `lambdas.tf`.
+5. Run `terraform -chdir=infra apply` — deploys the Lambda and regenerates `template.yaml`.
+
+---
+
+## 9. Testing
 
 ### Unit tests
 
@@ -290,10 +355,7 @@ All tests use `unittest.mock` — no AWS credentials or network access needed.
 
 ### Adding a new agent tool
 
-1. Create `lambda/agent/<tool_name>.py` with a `handler(event, context)` function.
-2. Add `"<tool_name>"` to the `agent_tools` set in [`infra/main.tf`](infra/main.tf).
-3. Add tests to [`tests/test_agent_tools.py`](tests/test_agent_tools.py).
-4. Run `terraform -chdir=infra apply` — Terraform zips and deploys the new Lambda automatically.
+See [section 8](#8-local-lambda-development) for the full workflow including local testing.
 
 ### Smoke test (against live deployment)
 

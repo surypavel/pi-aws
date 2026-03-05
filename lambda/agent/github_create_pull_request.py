@@ -11,6 +11,8 @@ sm = boto3.client("secretsmanager")
 
 
 def _get_token():
+    if token := os.environ.get("GITHUB_TOKEN"):
+        return token
     return sm.get_secret_value(SecretId=GITHUB_TOKEN_SECRET_ARN)["SecretString"]
 
 
